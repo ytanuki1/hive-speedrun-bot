@@ -17,7 +17,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 import config
-from gas_client import PlayerEntry
+from speedrun_api import PlayerEntry
 
 logger = logging.getLogger("image_generator")
 
@@ -133,7 +133,6 @@ def _fetch_background(url: str, size: tuple[int, int]) -> Image.Image:
         return _background_cache[cache_key].copy()
 
     try:
-        # Imgur対策としてUser-Agentを偽装
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
@@ -144,8 +143,8 @@ def _fetch_background(url: str, size: tuple[int, int]) -> Image.Image:
         return img
 
     img = ImageOps.fit(img, size, method=Image.LANCZOS, centering=(0.5, 0.4))
-    img = img.filter(ImageFilter.GaussianBlur(2))
-    dark_overlay = Image.new("RGBA", size, (0, 0, 0, 90))
+    img = img.filter(ImageFilter.GaussianBlur(config.BACKGROUND_BLUR_RADIUS))
+    dark_overlay = Image.new("RGBA", size, (0, 0, 0, config.BACKGROUND_DARKEN_ALPHA))
     img_rgba = img.convert("RGBA")
     result = Image.alpha_composite(img_rgba, dark_overlay).convert("RGB")
 
@@ -193,117 +192,109 @@ def generate_leaderboard_image(
     max_page: int = 1,
 ) -> Image.Image:
     
-    # --- 国別フィルタリング ＆ 順位の再計算処理 ---
-    display_entries = []
-    
-    # ページネーション時の開始インデックス (1ページ10件と仮定)
-    # これにより、2ページ目以降でも順位が1からリセットされず連番になります。
-    limit = 10
+    # --- configに基づくページネーション・国別判定 ---
+    limit = config.ROWS_PER_PAGE
     offset = (page - 1) * limit
+    
+    display_entries = []
+    is_jp = bool(country and country.upper() == config.JP_COUNTRY_CODE)
 
-    if country and country.lower() == "jp":
+    if is_jp:
         current_place = offset + 1
         prev_time = None
         
         for i, e in enumerate(entries):
-            # 前のプレイヤーとタイムが違う場合のみ順位を更新（同タイムの場合は同じ順位にする）
-            current_time = getattr(e, "time_seconds", None)
+            current_time = e.time_seconds
             if prev_time is not None and current_time != prev_time:
                 current_place = offset + i + 1
             
-            # (再計算した日本の順位, プレイヤー情報) のタプルとして保存
             display_entries.append((current_place, e))
             prev_time = current_time
     else:
-        # 世界ランキング（全体）の場合は元の順位(place)をそのまま使う
         for i, e in enumerate(entries):
-            # APIのレスポンスに place が含まれない・Noneの場合のフェールセーフ
-            place = getattr(e, "place", None)
-            if place is None:
-                place = offset + i + 1
+            place = e.place if e.place > 0 else offset + i + 1
             display_entries.append((place, e))
     
     # --- レイアウト設定 ---
     width = config.IMAGE_WIDTH
-    height = int(width * 9 / 16) # 約16:9の比率に固定 (1010 x 568)
+    row_count = len(display_entries) if display_entries else 1
     
-    pad = 20
+    height = config.HEADER_HEIGHT + (row_count * config.ROW_HEIGHT) + config.FOOTER_HEIGHT
+    
+    pad = config.PADDING
     gap_x = 8
-    gap_y = 6
-    cell_h = 36
+    gap_y = 8
+    cell_h = config.ROW_HEIGHT - gap_y 
     
     col_w = {
-        "pos": 50,
+        "pos": 60,
         "player": 320,
-        "time": 140,
-        "date": 140,
+        "time": 150,
+        "date": 150,
         "plat": 130
     }
     
     total_w = sum(col_w.values()) + gap_x * 4
     start_x = (width - total_w) // 2
     
-    header_y = pad + cell_h + gap_y * 2
-    data_start_y = header_y + cell_h + gap_y
-    footer_h = 50
+    header_y = config.HEADER_HEIGHT - config.ROW_HEIGHT
+    data_start_y = config.HEADER_HEIGHT
     
     # --- 背景とレイヤーの分離 ---
     bg = _fetch_background(background_url, (width, height)).convert("RGBA")
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
-    # 黒っぽい色、透明度50% (128 / 255) のボックス
-    cell_bg = (15, 15, 15, 128) 
     
-    # 列のX座標
     x_pos = start_x
     x_player = x_pos + col_w["pos"] + gap_x
     x_time = x_player + col_w["player"] + gap_x
-    x_date = x_time + col_w["date"] + gap_x
+    x_date = x_time + col_w["time"] + gap_x
     x_plat = x_date + col_w["date"] + gap_x
 
-    def draw_cell(x, y, w, h, text, font, color, anchor="mm"):
+    # 統一されたセルの背景色（ストライプを廃止し固定の半透明色を使用）
+    cell_bg = (15, 15, 15, 128)
+
+    def draw_cell(x, y, w, h, text, font, color, bg_color=cell_bg, anchor="mm"):
         box = (x, y, x + w, y + h)
-        _rounded_rect(draw, box, radius=8, fill=cell_bg)
+        _rounded_rect(draw, box, radius=8, fill=bg_color)
         
         text_x = x + w // 2 if anchor == "mm" else x + 15
         text_y = y + h // 2
         _draw_text_with_shadow(draw, (text_x, text_y), text, font, fill=color, anchor=anchor)
 
     # --- ヘッダー上部: タブ + タイトル ---
-    tab_text = "Japan" if country and country.lower() == "jp" else "Overall"
-    tab_font = _load_font("mojang", 20)
-    tab_w = int(draw.textlength(tab_text, font=tab_font)) + 30
+    tab_text = "Japan" if is_jp else "Overall"
+    tab_font = _load_font("mojang", 22)
+    tab_w = int(draw.textlength(tab_text, font=tab_font)) + 40
     
-    draw_cell(start_x, pad, tab_w, cell_h, tab_text, tab_font, config.COLORS["col_header_white"])
+    draw_cell(start_x, pad, tab_w, 46, tab_text, tab_font, config.COLORS["col_header_white"], config.COLORS["header_tab_bg"])
     
-    title_text = f"Gravity {division_label} Leaderboard".replace("(", "").replace(")", "")
-    title_font = _load_font("mojang", 20)
-    
-    t_box = (start_x + tab_w + gap_x, pad, start_x + total_w, pad + cell_h)
-    _rounded_rect(draw, t_box, radius=8, fill=cell_bg)
-    _draw_text_with_shadow(draw, ((t_box[0]+t_box[2])//2, (t_box[1]+t_box[3])//2), title_text, title_font, fill=config.COLORS["title_cyan"], anchor="mm")
+    title_text = f"{config.CATEGORY_NAME} {division_label} Leaderboard".replace("(", "").replace(")", "")
+    title_font = _load_font("mojang", 22)
+    t_w = total_w - tab_w - gap_x
+    draw_cell(start_x + tab_w + gap_x, pad, t_w, 46, title_text, title_font, config.COLORS["title_cyan"], config.COLORS["header_tab_bg"])
 
     # --- カラムヘッダー ---
-    header_font = _load_font("mojang", 20)
-    draw_cell(x_pos, header_y, col_w["pos"], cell_h, "Pos", header_font, config.COLORS["col_header_pos"])
-    draw_cell(x_player, header_y, col_w["player"], cell_h, "Player", header_font, config.COLORS["col_header_white"], anchor="lm")
-    draw_cell(x_time, header_y, col_w["time"], cell_h, "Time", header_font, config.COLORS["col_header_green"])
-    draw_cell(x_date, header_y, col_w["date"], cell_h, "Date", header_font, config.COLORS["col_header_green"])
-    draw_cell(x_plat, header_y, col_w["plat"], cell_h, "Platform", header_font, config.COLORS["col_header_red"])
+    h_font = _load_font("mojang", 20)
+    h_bg = config.COLORS["panel_bg"]
+    
+    draw_cell(x_pos, header_y, col_w["pos"], cell_h, "Pos", h_font, config.COLORS["col_header_pos"], h_bg)
+    draw_cell(x_player, header_y, col_w["player"], cell_h, "Player", h_font, config.COLORS["col_header_white"], h_bg, anchor="lm")
+    draw_cell(x_time, header_y, col_w["time"], cell_h, "Time", h_font, config.COLORS["col_header_green"], h_bg)
+    draw_cell(x_date, header_y, col_w["date"], cell_h, "Date", h_font, config.COLORS["col_header_green"], h_bg)
+    draw_cell(x_plat, header_y, col_w["plat"], cell_h, "Platform", h_font, config.COLORS["col_header_red"], h_bg)
 
     # --- データ行 ---
     data_font = _load_font("mojang", 20)
     name_font_size = 20
 
     if not display_entries:
-        empty_w = total_w
-        draw_cell(start_x, data_start_y, empty_w, cell_h, "No data available", data_font, config.COLORS["text_white"])
+        draw_cell(start_x, data_start_y, total_w, cell_h, "No data available", data_font, config.COLORS["text_white"], cell_bg)
 
     for i, (place, entry) in enumerate(display_entries):
-        y = data_start_y + i * (cell_h + gap_y)
+        y = data_start_y + i * config.ROW_HEIGHT
         
-        # Pos (数値として評価して確実に色分け)
+        # Pos
         try:
             place_num = int(place)
             if place_num == 1: pos_color = config.COLORS["rank_gold"]
@@ -313,7 +304,7 @@ def generate_leaderboard_image(
         except (ValueError, TypeError):
             pos_color = config.COLORS["rank_other"]
         
-        draw_cell(x_pos, y, col_w["pos"], cell_h, str(place), data_font, pos_color)
+        draw_cell(x_pos, y, col_w["pos"], cell_h, str(place), data_font, pos_color, cell_bg)
         
         # Player
         box_player = (x_player, y, x_player + col_w["player"], y + cell_h)
@@ -322,17 +313,17 @@ def generate_leaderboard_image(
         
         # Time
         time_text = entry.time_str.replace("：", ":")
-        draw_cell(x_time, y, col_w["time"], cell_h, time_text, data_font, config.COLORS["time_lightgreen"])
+        draw_cell(x_time, y, col_w["time"], cell_h, time_text, data_font, config.COLORS["time_lightgreen"], cell_bg)
         
         # Date
         date_text = (entry.date_str or "-").replace("-", "/").replace("ー", "/")
-        draw_cell(x_date, y, col_w["date"], cell_h, date_text, data_font, config.COLORS["date_darkgreen"])
+        draw_cell(x_date, y, col_w["date"], cell_h, date_text, data_font, config.COLORS["date_darkgreen"], cell_bg)
         
         # Platform
-        draw_cell(x_plat, y, col_w["plat"], cell_h, entry.platform_name or "-", data_font, config.COLORS["platform_red"])
+        draw_cell(x_plat, y, col_w["plat"], cell_h, entry.platform_name or "-", data_font, config.COLORS["platform_red"], cell_bg)
 
     # --- フッター (ページ番号・ロゴ表示) ---
-    footer_center_y = height - (footer_h // 2)
+    footer_center_y = height - (config.FOOTER_HEIGHT // 2)
 
     if max_page > 1:
         page_font = _load_font("mojang", 16)
@@ -345,7 +336,7 @@ def generate_leaderboard_image(
         overlay.alpha_composite(logo, (logo_x, logo_y))
     else:
         footer_font = _load_font("mojang", 16)
-        footer_text = "The Hive - speedrun.com"
+        footer_text = f"{config.GAME_NAME} - speedrun.com"
         draw.text((width // 2, footer_center_y), footer_text, font=footer_font, fill=(200, 200, 205, 200), anchor="mm")
 
     # 3. 背景画像と半透明オブジェクトを描画した透明レイヤーを合成
