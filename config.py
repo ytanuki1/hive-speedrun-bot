@@ -48,7 +48,7 @@ ROWS_PER_PAGE = 10
 MAX_ROWS_WORLD_DISPLAY = 40
 MAX_ROWS_JP_DISPLAY = 20
 
-LOGO_URL = os.environ.get("LOGO_URL", "https://playhive.com/_next/static/media/Hive.9ce7fa58.png")
+LOGO_URL = os.environ.get("LOGO_URL", "https://i.imgur.com/1yKPlg6.png")
 LOGO_HEIGHT = 34
 BACKGROUND_BLUR_RADIUS = 4
 BACKGROUND_DARKEN_ALPHA = 130
