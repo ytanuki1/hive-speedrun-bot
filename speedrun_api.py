@@ -86,7 +86,11 @@ def fetch_leaderboard(division_key: str, max_entries: int = 60) -> list[PlayerEn
             pid = p_data.get("id")
             p_info = players_by_id.get(pid, {})
             p_name = p_info.get("names", {}).get("international", "Unknown")
-            c_code = p_info.get("location", {}).get("country", {}).get("code")
+            # locationやcountryがNoneの場合を考慮して安全に取得する
+            loc = p_info.get("location")
+            country = loc.get("country") if isinstance(loc, dict) else None
+            c_code = country.get("code") if isinstance(country, dict) else None
+
         else:
             p_name = p_data.get("name", "Unknown")
             
