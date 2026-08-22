@@ -202,9 +202,6 @@ def generate_leaderboard_image(
         filtered_entries = [e for e in entries if getattr(e, "country_code", "").upper() == "JP"]
 
         for i, e in enumerate(filtered_entries):
-        # すでに cache_manager 側でホワイトリスト適用済みのデータが渡ってくるため、
-        # country_code による再フィルタリングは行わず、そのまま順位の再計算だけを行う。
-        for i, e in enumerate(entries):
             # 前のプレイヤーとタイムが違う場合のみ順位を更新（同タイムの場合は同じ順位にする）
             if prev_time is not None and getattr(e, "time_seconds", None) != prev_time:
                 current_place = i + 1
@@ -215,6 +212,7 @@ def generate_leaderboard_image(
     else:
         # 全体の場合は元の順位をそのまま使う
         display_entries = [(getattr(e, "place", i + 1), e) for i, e in enumerate(entries)]
+
 
     # --- レイアウト設定 ---
     width = config.IMAGE_WIDTH
