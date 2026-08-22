@@ -37,11 +37,10 @@ _resolved_cache: dict[str, ResolvedDivision] = {}
 
 def _get(path: str, params: Optional[dict] = None) -> dict:
     url = f"{API_BASE}{path}"
-    logger.info(f"APIリクエスト送信: {url} (params={params})")  # ログを追加
+    logger.info(f"APIリクエスト送信: {url} (params={params})")
     resp = _session.get(url, params=params, timeout=REQUEST_TIMEOUT)
 
     if resp.status_code != 200:
-        # ステータスコードとレスポンスの中身をログに出す
         logger.error(
             f"API Error! Status: {resp.status_code}, Response: {resp.text}"
         )
@@ -87,12 +86,12 @@ def fetch_leaderboard(division_key: str, max_entries: int = 60) -> list[PlayerEn
             p_info = players_by_id.get(pid, {})
             p_name = p_info.get("names", {}).get("international", "Unknown")
             
-            # locationやregionがNoneの場合を考慮して安全に取得する
+            # location -> country -> code を安全に取得
             loc = p_info.get("location")
             if isinstance(loc, dict):
-                # ご指定通り "region" キーから取得するように修正
-                region_info = loc.get("region")
-                c_code = region_info.get("code") if isinstance(region_info, dict) else None
+                country = loc.get("country")
+                if isinstance(country, dict):
+                    c_code = country.get("code")
 
         else:
             p_name = p_data.get("name", "Unknown")
