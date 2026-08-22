@@ -1,4 +1,4 @@
-from __future__ import annotations
+From __future__ import annotations
 import logging, time, requests
 from dataclasses import dataclass, field
 from typing import Optional
@@ -64,9 +64,10 @@ def resolve_division(division_key: str, force: bool = False) -> ResolvedDivision
     _resolved_cache[division_key] = resolved
     return resolved
 
-def fetch_leaderboard(division_key: str, max_entries: int = 60) -> list[PlayerEntry]:
+def fetch_leaderboard(division_key: str, max_entries: int = 150) -> list[PlayerEntry]:
     resolved = resolve_division(division_key)
-    params = {"embed": "players,platforms"}
+    # maxパラメータに取得したい件数を指定（最大100〜200程度まで指定可能）
+    params = {"embed": "players,platforms", "max": max_entries}
     if resolved.variable_id and resolved.value_id:
         params[f"var-{resolved.variable_id}"] = resolved.value_id
     
