@@ -198,10 +198,10 @@ def generate_leaderboard_image(
     if country and country.lower() == "jp":
         current_place = 1
         prev_time = None
-        # JPプレイヤーのみ抽出
-        filtered_entries = [e for e in entries if getattr(e, "country_code", "").upper() == "JP"]
         
-        for i, e in enumerate(filtered_entries):
+        # すでに cache_manager 側でホワイトリスト適用済みのデータが渡ってくるため、
+        # country_code による再フィルタリングは行わず、そのまま順位の再計算だけを行う。
+        for i, e in enumerate(entries):
             # 前のプレイヤーとタイムが違う場合のみ順位を更新（同タイムの場合は同じ順位にする）
             if prev_time is not None and getattr(e, "time_seconds", None) != prev_time:
                 current_place = i + 1
