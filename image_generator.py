@@ -195,23 +195,33 @@ def generate_leaderboard_image(
     
     # --- 国別フィルタリング ＆ 順位の再計算処理 ---
     display_entries = []
+    
+    # ページネーション時の開始インデックス (1ページ10件と仮定)
+    # これにより、2ページ目以降でも順位が1からリセットされず連番になります。
+    limit = 10
+    offset = (page - 1) * limit
+
     if country and country.lower() == "jp":
-        current_place = 1
+        current_place = offset + 1
         prev_time = None
         
-        # すでに cache_manager 側でホワイトリスト適用済みのデータが渡ってくるため、
-        # country_code による再フィルタリングは行わず、そのまま順位の再計算だけを行う。
         for i, e in enumerate(entries):
             # 前のプレイヤーとタイムが違う場合のみ順位を更新（同タイムの場合は同じ順位にする）
-            if prev_time is not None and getattr(e, "time_seconds", None) != prev_time:
-                current_place = i + 1
+            current_time = getattr(e, "time_seconds", None)
+            if prev_time is not None and current_time != prev_time:
+                current_place = offset + i + 1
             
-            # (再計算した順位, プレイヤー情報) のタプルとして保存
+            # (再計算した日本の順位, プレイヤー情報) のタプルとして保存
             display_entries.append((current_place, e))
-            prev_time = getattr(e, "time_seconds", None)
+            prev_time = current_time
     else:
-        # 全体の場合は元の順位をそのまま使う
-        display_entries = [(getattr(e, "place", i + 1), e) for i, e in enumerate(entries)]
+        # 世界ランキング（全体）の場合は元の順位(place)をそのまま使う
+        for i, e in enumerate(entries):
+            # APIのレスポンスに place が含まれない・Noneの場合のフェールセーフ
+            place = getattr(e, "place", None)
+            if place is None:
+                place = offset + i + 1
+            display_entries.append((place, e))
     
     # --- レイアウト設定 ---
     width = config.IMAGE_WIDTH
@@ -238,10 +248,7 @@ def generate_leaderboard_image(
     footer_h = 50
     
     # --- 背景とレイヤーの分離 ---
-    # 1. 不透明な背景画像を用意 (RGB -> RGBA)
     bg = _fetch_background(background_url, (width, height)).convert("RGBA")
-    
-    # 2. 描画用の透明なオーバーレイレイヤーを作成
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
@@ -252,7 +259,7 @@ def generate_leaderboard_image(
     x_pos = start_x
     x_player = x_pos + col_w["pos"] + gap_x
     x_time = x_player + col_w["player"] + gap_x
-    x_date = x_time + col_w["time"] + gap_x
+    x_date = x_time + col_w["date"] + gap_x
     x_plat = x_date + col_w["date"] + gap_x
 
     def draw_cell(x, y, w, h, text, font, color, anchor="mm"):
@@ -296,24 +303,28 @@ def generate_leaderboard_image(
     for i, (place, entry) in enumerate(display_entries):
         y = data_start_y + i * (cell_h + gap_y)
         
-        # Pos (再計算された順位を利用)
-        if place == 1: pos_color = config.COLORS["rank_gold"]
-        elif place == 2: pos_color = config.COLORS["rank_silver"]
-        elif place == 3: pos_color = config.COLORS["rank_bronze"]
-        else: pos_color = config.COLORS["rank_other"]
+        # Pos (数値として評価して確実に色分け)
+        try:
+            place_num = int(place)
+            if place_num == 1: pos_color = config.COLORS["rank_gold"]
+            elif place_num == 2: pos_color = config.COLORS["rank_silver"]
+            elif place_num == 3: pos_color = config.COLORS["rank_bronze"]
+            else: pos_color = config.COLORS["rank_other"]
+        except (ValueError, TypeError):
+            pos_color = config.COLORS["rank_other"]
         
         draw_cell(x_pos, y, col_w["pos"], cell_h, str(place), data_font, pos_color)
         
-        # Player (混在テキスト対応)
+        # Player
         box_player = (x_player, y, x_player + col_w["player"], y + cell_h)
         _rounded_rect(draw, box_player, radius=8, fill=cell_bg)
         _draw_mixed_text(draw, (x_player + 15, y + cell_h//2), entry.player_name, name_font_size, fill=config.COLORS["player_name"])
         
-        # Time (確実に半角コロンにする)
+        # Time
         time_text = entry.time_str.replace("：", ":")
         draw_cell(x_time, y, col_w["time"], cell_h, time_text, data_font, config.COLORS["time_lightgreen"])
         
-        # Date (確実に半角スラッシュにする)
+        # Date
         date_text = (entry.date_str or "-").replace("-", "/").replace("ー", "/")
         draw_cell(x_date, y, col_w["date"], cell_h, date_text, data_font, config.COLORS["date_darkgreen"])
         
@@ -331,7 +342,6 @@ def generate_leaderboard_image(
     if logo is not None:
         logo_x = (width - logo.width) // 2
         logo_y = footer_center_y - logo.height // 2
-        # ロゴは透明レイヤー側に合成する
         overlay.alpha_composite(logo, (logo_x, logo_y))
     else:
         footer_font = _load_font("mojang", 16)
@@ -341,5 +351,4 @@ def generate_leaderboard_image(
     # 3. 背景画像と半透明オブジェクトを描画した透明レイヤーを合成
     final_canvas = Image.alpha_composite(bg, overlay)
 
-    # RGBに変換して出力（最終的な画像ファイル自体の背景透過を防ぐ）
     return final_canvas.convert("RGB")
