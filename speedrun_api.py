@@ -1,4 +1,4 @@
-From __future__ import annotations
+from __future__ import annotations
 import logging, time, requests
 from dataclasses import dataclass, field
 from typing import Optional
@@ -64,9 +64,9 @@ def resolve_division(division_key: str, force: bool = False) -> ResolvedDivision
     _resolved_cache[division_key] = resolved
     return resolved
 
-def fetch_leaderboard(division_key: str, max_entries: int = 150) -> list[PlayerEntry]:
+def fetch_leaderboard(division_key: str, max_entries: int = 200) -> list[PlayerEntry]:
     resolved = resolve_division(division_key)
-    # maxパラメータに取得したい件数を指定（最大100〜200程度まで指定可能）
+    # maxパラメータに取得したい件数を指定（最大100〜200件まで指定可能）
     params = {"embed": "players,platforms", "max": max_entries}
     if resolved.variable_id and resolved.value_id:
         params[f"var-{resolved.variable_id}"] = resolved.value_id
@@ -87,7 +87,6 @@ def fetch_leaderboard(division_key: str, max_entries: int = 150) -> list[PlayerE
             p_info = players_by_id.get(pid, {})
             p_name = p_info.get("names", {}).get("international", "Unknown")
             
-            # location -> country -> code を安全に取得
             loc = p_info.get("location")
             if isinstance(loc, dict):
                 country = loc.get("country")
