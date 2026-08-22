@@ -28,7 +28,7 @@ GAME_NAME = "The Hive"
 GAME_ID = "hive"
 CATEGORY_NAME = "Gravity"
 
-_jp_whitelist_raw = os.environ.get("JP_WHITELIST", "yytanuki,tanukichi")
+_jp_whitelist_raw = os.environ.get("JP_WHITELIST", "tanukiYy,AmonHive,AlmondCellar,Suriipu,StoodBird84586,MintGamesYT,maikuragenzin,spring861,TouTubeTomaTV,iroha0515")
 JP_WHITELIST = {name.strip().lower() for name in _jp_whitelist_raw.split(",") if name.strip()}
 JP_COUNTRY_CODE = "JP"
 
