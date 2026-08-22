@@ -25,7 +25,7 @@ DIVISIONS = {
 }
 
 GAME_NAME = "The Hive"
-GAME_ID = "v1px2668"
+GAME_ID = "hive"
 CATEGORY_NAME = "Gravity"
 
 _jp_whitelist_raw = os.environ.get("JP_WHITELIST", "yytanuki,tanukichi")
