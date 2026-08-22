@@ -210,9 +210,14 @@ def generate_leaderboard_image(
             display_entries.append((current_place, e))
             prev_time = getattr(e, "time_seconds", None)
     else:
-        # 全体の場合は元の順位をそのまま使う
-        display_entries = [(getattr(e, "place", i + 1), e) for i, e in enumerate(entries)]
-
+        # 全体の場合は元の順位(e.place)を最優先で使う（無ければページ数を加味したインデックスを使用）
+        display_entries = []
+        for i, e in enumerate(entries):
+            # hasattrでチェックしつつ、取得できなかった場合のフォールバックを強化
+            place = getattr(e, "place", None)
+            if not place:  
+                place = i + 1 + (page - 1) * len(entries) # ページネーション時のズレ対策
+            display_entries.append((place, e))
 
     # --- レイアウト設定 ---
     width = config.IMAGE_WIDTH
@@ -297,11 +302,16 @@ def generate_leaderboard_image(
     for i, (place, entry) in enumerate(display_entries):
         y = data_start_y + i * (cell_h + gap_y)
 
-        # Pos (再計算された順位を利用)
-        if place == 1: pos_color = config.COLORS["rank_gold"]
-        elif place == 2: pos_color = config.COLORS["rank_silver"]
-        elif place == 3: pos_color = config.COLORS["rank_bronze"]
-        else: pos_color = config.COLORS["rank_other"]
+        # Pos (再計算された順位またはAPIの順位を利用)
+        # ※整数変換しておくことで予期せぬ文字列事故を防止
+        try:
+            place_num = int(place)
+            if place_num == 1: pos_color = config.COLORS["rank_gold"]
+            elif place_num == 2: pos_color = config.COLORS["rank_silver"]
+            elif place_num == 3: pos_color = config.COLORS["rank_bronze"]
+            else: pos_color = config.COLORS["rank_other"]
+        except ValueError:
+            pos_color = config.COLORS["rank_other"]
 
         draw_cell(x_pos, y, col_w["pos"], cell_h, str(place), data_font, pos_color)
 
@@ -344,4 +354,4 @@ def generate_leaderboard_image(
 
     # RGBに変換して出力（最終的な画像ファイル自体の背景透過を防ぐ）
     return final_canvas.convert("RGB")
-    return final_canvas.convert("RGB")
+
