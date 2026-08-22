@@ -36,10 +36,18 @@ _session.headers.update({"User-Agent": USER_AGENT})
 _resolved_cache: dict[str, ResolvedDivision] = {}
 
 def _get(path: str, params: Optional[dict] = None) -> dict:
-    url = f"{API_BASE}{path}"
-    resp = _session.get(url, params=params, timeout=REQUEST_TIMEOUT)
-    if resp.status_code != 200: raise SpeedrunAPIError("API Error")
-    return resp.json()
+  url = f"{API_BASE}{path}"
+  logger.info(f"APIリクエスト送信: {url} (params={params})")  # ログを追加
+  resp = _session.get(url, params=params, timeout=REQUEST_TIMEOUT)
+
+  if resp.status_code != 200:
+    # ステータスコードとレスポンスの中身をログに出す
+    logger.error(
+        f"API Error! Status: {resp.status_code}, Response: {resp.text}"
+    )
+    raise SpeedrunAPIError(f"API Error: {resp.status_code}")
+
+  return resp.json()
 
 def resolve_division(division_key: str, force: bool = False) -> ResolvedDivision:
     if not force and division_key in _resolved_cache: return _resolved_cache[division_key]
