@@ -12,8 +12,8 @@ GAS側も30分毎の時間主導トリガーで自動更新されるが、Python
 GASにPOSTして手動更新をトリガーできる。
 
 JP判定は以下の優先順位で行う:
-  1. speedrun.comに登録されている国籍情報 (location.country.code == "JP")
-  2. 国籍が未登録の場合のみ、config.JP_WHITELIST（プレイヤー名）で補完判定
+  1. config.JP_WHITELIST（プレイヤー名）による強制判定（最優先）
+  2. speedrun.comに登録されている国籍情報 (location.country.code == "JP")
 """
 
 from __future__ import annotations
@@ -73,17 +73,18 @@ def _load_from_disk(key: str) -> Optional[dict]:
 def _is_jp_player(entry: PlayerEntry) -> bool:
     """
     JP判定:
-      1. 国籍情報が登録されていれば、それが最優先（"JP"ならTrue、それ以外はFalse）
-      2. 国籍情報が未登録 (country_code is None) の場合のみ、
-         ホワイトリスト（プレイヤー名）で補完判定する
+      1. ホワイトリストを最優先で確認（設定ミスや別国籍設定のプレイヤーも強制救済）
+      2. 登録されていなければ、speedrun.comの国籍情報を確認
     """
+    # 1. ホワイトリストによる強制JP判定
+    if config.JP_WHITELIST and entry.player_name.strip().lower() in config.JP_WHITELIST:
+        return True
+
+    # 2. 国籍情報による判定（大文字・小文字の違いを吸収）
     if entry.country_code:
-        return entry.country_code == config.JP_COUNTRY_CODE
+        return entry.country_code.upper() == config.JP_COUNTRY_CODE.upper()
 
-    if not config.JP_WHITELIST:
-        return False
-
-    return entry.player_name.strip().lower() in config.JP_WHITELIST
+    return False
 
 
 def _filter_jp(entries: list[PlayerEntry]) -> list[PlayerEntry]:
