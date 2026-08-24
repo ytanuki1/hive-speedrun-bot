@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import io
 import logging
@@ -58,7 +59,6 @@ def home():
 
 
 def run_web():
-  # Render等のPaaSは環境変数 PORT を自動割り当てするため、それに合わせます
   port = int(os.environ.get("PORT", 8080))
   app.run(host="0.0.0.0", port=port)
 
@@ -88,8 +88,6 @@ DIVISION_CHOICES = [
 # ------------------------------------------------------------
 # 画像キャッシュ (メモリ内)
 # ------------------------------------------------------------
-# キー: (country_key, division_key, page)
-# 値: (updated_at, image_bytes)
 _image_cache: dict[tuple[str, str, int], tuple[float, bytes]] = {}
 
 
@@ -104,11 +102,6 @@ def _build_message_payload(
     Optional["LeaderboardView"],
     Optional[str],
 ]:
-  """指定条件のリーダーボード画像・本文・ボタンViewを組み立てる。
-
-  戻り値: (file, content, view, error_message) エラー時は file/content/view が None、error_message
-  にメッセージが入る。
-  """
   div_conf = config.DIVISIONS[division_key]
 
   page_data = cache_manager.get_page(country_key, division_key, page)
@@ -132,13 +125,11 @@ def _build_message_payload(
 
   # --- キャッシュの確認と画像生成 ---
   if cache_key in _image_cache and _image_cache[cache_key][0] == updated_at:
-    # キャッシュヒット: 更新日時が同じなら保存された画像データを使用
     image_bytes = _image_cache[cache_key][1]
     logger.info(
         f"キャッシュ画像を使用: {country_key}/{division_key}/page:{current_page}"
     )
   else:
-    # キャッシュミス: データ更新あり、または初回生成
     try:
       image = generate_leaderboard_image(
           entries=entries,
@@ -149,12 +140,10 @@ def _build_message_payload(
           max_page=max_page,
       )
 
-      # 画像をバイトデータに変換
       buffer = io.BytesIO()
       image.convert("RGB").save(buffer, format="PNG")
       image_bytes = buffer.getvalue()
 
-      # キャッシュを更新 (古いデータは上書きされるためメモリリークしない)
       _image_cache[cache_key] = (updated_at, image_bytes)
       logger.info(
           "画像を新規生成・キャッシュ更新:"
@@ -186,7 +175,6 @@ def _build_message_payload(
       f"-# キャッシュ更新: {updated_str}（30分毎に自動更新）"
   )
 
-  # 送信するたびに新しいBytesIOストリームを作成してFileに渡す（エラー防止）
   file = discord.File(fp=io.BytesIO(image_bytes), filename="leaderboard.png")
 
   view = (
@@ -307,6 +295,39 @@ async def on_ready() -> None:
     logger.info("定期キャッシュ更新ループを開始しました（毎時00分・30分, UTC基準）。")
 
 
+# ------------------------------------------------------------
+# スラッシュコマンドのエラーハンドラ（レート制限の秒数をログ出力）
+# ------------------------------------------------------------
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+):
+  original = getattr(error, "original", error)
+
+  if isinstance(original, discord.HTTPException) and original.status == 429:
+    retry_after = getattr(original, "retry_after", 5.0)
+    logger.warning(
+        f"【レート制限検知】APIの制限に達しました。あと {retry_after:.2f}"
+        f" 秒待つ必要があります。 (パス: {original.path})"
+    )
+
+    message = (
+        f"⚠️ リクエストが多すぎたため、一時的に制限されています。"
+        f"約 **{int(retry_after) + 1}秒後** に再度お試しください。"
+    )
+    if interaction.response.is_done():
+      await interaction.followup.send(message, ephemeral=True)
+    else:
+      await interaction.response.send_message(message, ephemeral=True)
+  else:
+    logger.exception("スラッシュコマンド実行中にエラーが発生しました。", exc_info=error)
+    message = "予期しないエラーが発生しました。"
+    if interaction.response.is_done():
+      await interaction.followup.send(message, ephemeral=True)
+    else:
+      await interaction.response.send_message(message, ephemeral=True)
+
+
 @bot.tree.command(
     name="speedrun", description="The Hive Gravityカテゴリのリーダーボードを表示します。"
 )
@@ -315,6 +336,7 @@ async def on_ready() -> None:
     division="部門（5maps / nocustom）",
 )
 @app_commands.choices(country=COUNTRY_CHOICES, division=DIVISION_CHOICES)
+@app_commands.checks.cooldown(1, 5.0)  # 連打対策のクールダウン（5秒に1回）
 async def speedrun_command(
     interaction: discord.Interaction,
     country: app_commands.Choice[str],
@@ -343,6 +365,19 @@ async def speedrun_command(
     await interaction.followup.send(content=content, file=file)
 
 
+# クールダウン中のエラーメッセージ処理
+@speedrun_command.error
+async def speedrun_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+) -> None:
+  if isinstance(error, app_commands.CommandOnCooldown):
+    await interaction.response.send_message(
+        f"このコマンドはクールダウン中です。あと **{error.retry_after:.1f}秒**"
+        "後にお試しください。",
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(
     name="speedrun_refresh",
     description="（管理者向け）speedrun.comから即時再取得し、キャッシュを更新します。",
@@ -351,9 +386,7 @@ async def speedrun_command(
 async def speedrun_refresh_command(interaction: discord.Interaction) -> None:
   await interaction.response.defer(thinking=True, ephemeral=True)
   try:
-    # 1. GAS Webアプリにspeedrun.comからの即時再取得を指示（POST）
     cache_manager.trigger_gas_refresh()
-    # 2. GAS側で更新されたデータをPython側キャッシュに反映（GET）
     await cache_manager.refresh_all()
   except GasClientError as e:
     logger.error("手動更新中にGASエラーが発生しました: %s", e)
@@ -413,7 +446,6 @@ def main() -> None:
     )
     sys.exit(1)
 
-  # スリープ対策用Webサーバーを別スレッドで起動
   keep_alive()
 
   logger.info("%s v%s を起動します。", config.BOT_NAME, config.BOT_VERSION)
